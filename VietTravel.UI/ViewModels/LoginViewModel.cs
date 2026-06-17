@@ -1,0 +1,103 @@
+using System.Threading.Tasks;
+using System.Windows;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using VietTravel.Data.Services;
+
+namespace VietTravel.UI.ViewModels
+{
+    public partial class LoginViewModel : ObservableObject
+    {
+        private readonly MainViewModel _mainViewModel;
+        private readonly AuthService _authService;
+
+        [ObservableProperty]
+        private string _username = string.Empty;
+
+        [ObservableProperty]
+        private string _password = string.Empty;
+
+        [ObservableProperty]
+        private bool _isLoading = false;
+
+        [ObservableProperty]
+        private string _errorMessage = string.Empty;
+
+        public bool HasError => !string.IsNullOrEmpty(ErrorMessage);
+        public bool IsNotLoading => !IsLoading;
+
+        public LoginViewModel(MainViewModel mainViewModel)
+        {
+            _mainViewModel = mainViewModel;
+            _authService = new AuthService();
+        }
+
+        partial void OnErrorMessageChanged(string value)
+        {
+            OnPropertyChanged(nameof(HasError));
+        }
+
+        partial void OnIsLoadingChanged(bool value)
+        {
+            OnPropertyChanged(nameof(IsNotLoading));
+        }
+
+        [RelayCommand]
+        public async Task LoginAsync()
+        {
+            if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrWhiteSpace(Password))
+            {
+                ErrorMessage = "Vui lòng nhập tài khoản và mật khẩu.";
+                return;
+            }
+
+            // Check lockout before making network call
+            if (_authService.IsAccountLocked(Username))
+            {
+                var minutes = _authService.GetRemainingLockoutMinutes(Username);
+                ErrorMessage = $"Tài khoản tạm khóa. Vui lòng thử lại sau {minutes} phút.";
+                return;
+            }
+
+            IsLoading = true;
+            ErrorMessage = string.Empty;
+
+            try
+            {
+                var user = await _authService.LoginAsync(Username, Password);
+                if (user != null)
+                {
+                    _mainViewModel.CurrentUser = user;
+                    await _mainViewModel.StartNotificationsAsync();
+
+                    // Admin, Employee, Guide use the operation shell
+                    if (user.Role == "Admin" || user.Role == "Employee" || user.Role == "Guide")
+                    {
+                        _mainViewModel.NavigateTo(new AdminShellViewModel(_mainViewModel));
+                    }
+                    else
+                    {
+                        _mainViewModel.NavigateTo(new CustomerViewModel(_mainViewModel));
+                    }
+                }
+                else
+                {
+                    ErrorMessage = "Sai tài khoản hoặc mật khẩu.";
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Rate limiting lockout message
+                ErrorMessage = ex.Message;
+            }
+            catch (System.Exception ex)
+            {
+                ErrorMessage = "Lỗi kết nối: " + ex.Message;
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+    }
+}
